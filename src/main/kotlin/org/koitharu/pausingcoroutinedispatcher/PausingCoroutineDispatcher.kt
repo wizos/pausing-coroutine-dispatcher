@@ -8,28 +8,32 @@ import kotlin.coroutines.EmptyCoroutineContext
 
 /**
  * Launches a new coroutine with an ability to pause it
+ * @param initialPaused if true, the coroutine will be paused immediately after launch
  * @see launch
  */
 public fun CoroutineScope.launchPausing(
     context: CoroutineContext = EmptyCoroutineContext,
     start: CoroutineStart = CoroutineStart.DEFAULT,
+    initialPaused: Boolean = false,
     block: suspend CoroutineScope.() -> Unit
 ): PausingJob {
-    val dispatcher = PausingDispatcher(this, context)
+    val dispatcher = PausingDispatcher(this, context, initialPaused)
     val job = launch(context + dispatcher.queue + dispatcher, start, block)
     return PausingJob(job, dispatcher.queue)
 }
 
 /**
  * Launches a new coroutine with an ability to pause it
+ * @param initialPaused if true, the coroutine will be paused immediately after launch
  * @see async
  */
 public fun <T> CoroutineScope.asyncPausing(
     context: CoroutineContext = EmptyCoroutineContext,
     start: CoroutineStart = CoroutineStart.DEFAULT,
+    initialPaused: Boolean = false,
     block: suspend CoroutineScope.() -> T
 ): PausingDeferred<T> {
-    val dispatcher = PausingDispatcher(this, context)
+    val dispatcher = PausingDispatcher(this, context, initialPaused)
     val deferred = async(context + dispatcher.queue + dispatcher, start, block)
     return PausingDeferred(deferred, dispatcher.queue)
 }
@@ -56,12 +60,13 @@ public suspend fun CoroutineContext.pausing(): CoroutineContext {
 
 /**
  * Suspend execution if current coroutine is paused.
+ * Will keep yielding until the coroutine is resumed.
  */
 public suspend fun ensureNotPaused() {
     val currentContext = currentCoroutineContext()
     currentContext.ensureActive()
     val queue = currentContext[PausingDispatchQueue] ?: return
-    if (queue.isPaused) {
+    while (queue.isPaused) {
         yield()
     }
 }
@@ -75,12 +80,16 @@ public suspend fun currentPausingHandle(): PausingHandle? {
 }
 
 @Suppress("FunctionName")
-private fun PausingDispatcher(scope: CoroutineScope, newContext: CoroutineContext): PausingDispatcherImpl {
+private fun PausingDispatcher(
+    scope: CoroutineScope,
+    newContext: CoroutineContext,
+    initialPaused: Boolean = false,
+): PausingDispatcherImpl {
     val dispatcher = newContext[CoroutineDispatcher]
         ?: scope.coroutineContext[CoroutineDispatcher]
         ?: Dispatchers.Default
     return PausingDispatcherImpl(
-        queue = PausingDispatchQueue(),
+        queue = PausingDispatchQueue(initialPaused),
         baseDispatcher = if (dispatcher is PausingDispatcherImpl) dispatcher.baseDispatcher else dispatcher
     )
 }

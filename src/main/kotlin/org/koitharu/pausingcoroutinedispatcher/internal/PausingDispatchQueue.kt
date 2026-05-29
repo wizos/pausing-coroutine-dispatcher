@@ -8,38 +8,62 @@ import kotlin.concurrent.Volatile
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 
-internal class PausingDispatchQueue : AbstractCoroutineContextElement(Key), PausingHandle {
+internal class PausingDispatchQueue(
+    initialPaused: Boolean = false,
+) : AbstractCoroutineContextElement(Key), PausingHandle {
 
     @Volatile
-    private var paused = false
+    private var paused = initialPaused
     private val queue = ArrayDeque<Resumer>()
-    private val pauseSync = SynchronizedObject()
+    private val sync = SynchronizedObject()
 
     override val isPaused: Boolean
         get() = paused
 
     override fun pause() {
-        synchronized(pauseSync) {
+        synchronized(sync) {
             paused = true
         }
     }
 
     override fun resume() {
-        synchronized(pauseSync) {
+        synchronized(sync) {
             if (paused) {
                 paused = false
-                dispatchNext()
+                dispatchAll()
             }
         }
     }
 
-    fun queue(context: CoroutineContext, block: Runnable, dispatcher: CoroutineDispatcher) {
-        queue.addLast(Resumer(dispatcher, context, block))
+    fun enqueue(context: CoroutineContext, block: Runnable, dispatcher: CoroutineDispatcher) {
+        synchronized(sync) {
+            queue.addLast(Resumer(dispatcher, context, block))
+        }
     }
 
-    private fun dispatchNext() {
-        val resumer = queue.removeFirstOrNull() ?: return
-        resumer.dispatch()
+    /**
+     * Dispatch all pending tasks from the queue.
+     * Must be called while holding [sync] lock.
+     * Each task is dispatched to the base dispatcher so they can run in parallel.
+     */
+    private fun dispatchAll() {
+        while (true) {
+            val resumer = queue.removeFirstOrNull() ?: break
+            resumer.dispatch()
+        }
+    }
+
+    /**
+     * Try to dispatch the next pending task if not paused.
+     * Called after a task completes, to chain-dispatch the next one.
+     */
+    private fun tryDispatchNext() {
+        synchronized(sync) {
+            if (!paused) {
+                val resumer = queue.removeFirstOrNull() ?: return
+                resumer.dispatch()
+            }
+        }
     }
 
     override fun toString(): String {
@@ -54,9 +78,7 @@ internal class PausingDispatchQueue : AbstractCoroutineContextElement(Key), Paus
 
         override fun run() {
             block.run()
-            if (!paused) {
-                dispatchNext()
-            }
+            tryDispatchNext()
         }
 
         fun dispatch() {

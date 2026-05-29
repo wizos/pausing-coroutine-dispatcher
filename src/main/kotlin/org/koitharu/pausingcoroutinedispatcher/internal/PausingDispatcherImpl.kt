@@ -15,7 +15,7 @@ internal class PausingDispatcherImpl(
 
     override fun dispatch(context: CoroutineContext, block: Runnable) {
         if (isPaused(context)) {
-            queue.queue(context, block, baseDispatcher)
+            queue.enqueue(context, block, baseDispatcher)
         } else {
             baseDispatcher.dispatch(context, block)
         }
@@ -28,7 +28,7 @@ internal class PausingDispatcherImpl(
     @InternalCoroutinesApi
     override fun dispatchYield(context: CoroutineContext, block: Runnable) {
         if (isPaused(context)) {
-            queue.queue(context, block, baseDispatcher)
+            queue.enqueue(context, block, baseDispatcher)
         } else {
             baseDispatcher.dispatchYield(context, block)
         }
